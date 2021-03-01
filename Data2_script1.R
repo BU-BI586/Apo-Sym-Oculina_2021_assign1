@@ -140,34 +140,76 @@ tail(track)
 
 write.csv(track,file="ReadFilterStats_AllData_final.csv",row.names=TRUE,quote=FALSE)
 
+#THIS IS ITS2 PART FROM ORIGONAL SCRIPT
+# ################################
+# ##### Assign Taxonomy #######
+# ################################
+# 
+# #It is common at this point, especially in 16S/18S/ITS amplicon sequencing, to classify sequence variants taxonomically. 
+# #DADA2 provides a native implementation of the RDP's naive Bayesian classifier. The assignTaxonomy function takes a set of sequences and a training set of taxonomically classified sequences, and outputs the taxonomic assignments with at least minBoot bootstrap confidence.
+# #Here, I have supplied a modified version of the GeoSymbio ITS2 database listing more taxonomic info as phyloseq requires (Franklin et al. 2012)
+# #For example: GeoSymbio data (taken from "all clades" at https://sites.google.com/site/geosymbio/downloads):
+# #>A1.1
+# #modified version for phyloseq looks like this instead:
+# #>Symbiodinium; Clade A; A1.1
+# 
+# taxa <- assignTaxonomy(seqtab.nochim, "GeoSymbio_ITS2_LocalDatabase_verForPhyloseq.fasta", minBoot=5,multithread=TRUE,tryRC=TRUE,outputBootstraps=FALSE)
+# #minboot should be higher
+# #Obtain a csv file for the taxonomy so that it's easier to map the sequences for the heatmap.
+# write.csv(taxa, file="taxa.csv",row.name=TRUE,quote=FALSE)
+# unname(head(taxa, 30))
+# unname(taxa)
+# 
+# #Now, save outputs so can come back to the analysis stage at a later point if desired
+# saveRDS(seqtab.nochim, file="final_seqtab_nochim.rds")
+# saveRDS(taxa, file="final_taxa_blastCorrected.rds")
+# 
+# #If you need to read in previously saved datafiles
+# seqtab.nochim <- readRDS("final_seqtab_nochim.rds")
+# taxa <- readRDS("final_taxa_blastCorrected.rds")
+# head(taxa)
+#~############################~#
+##### Assign Taxonomy ##########
+#~############################~#
 
-################################
-##### Assign Taxonomy #######
-################################
+# #Using package DECIPHER as an alternatie to 'assignTaxonomy'
+BiocManager::install("DECIPHER")
+library(DECIPHER); packageVersion("DECIPHER")
+# #citation("DECIPHER")
+# 
+# #http://DECIPHER.codes/Downloads.html. Download the SILVA SSU r132 (modified) file to follow along.
+# Olivia: I downloaded r138
+dna <- DNAStringSet(getSequences(seqtab.nochim)) 
+# Create a DNAStringSet from the ASVs
+load("C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/SILVA_SSU_r138_2019.RData") # CHANGE TO THE PATH OF YOUR TRAINING SET
+ids <- IdTaxa(dna, trainingSet, strand="top", processors=NULL, verbose=FALSE, threshold=50) # use all processors
+ranks <- c("domain", "phylum", "class", "order", "family", "genus", "species") # ranks of interest
+# # Convert the output object of class "Taxa" to a matrix analogous to the output from assignTaxonomy
+taxid <- t(sapply(ids, function(x) {
+    m <- match(ranks, x$rank)
+    taxa <- x$taxon[m]
+   taxa[startsWith(taxa, "unclassified_")] <- NA
+   taxa
+ }))
+colnames(taxid) <- ranks; rownames(taxid) <- getSequences(seqtab.nochim)
 
-#It is common at this point, especially in 16S/18S/ITS amplicon sequencing, to classify sequence variants taxonomically. 
-#DADA2 provides a native implementation of the RDP's naive Bayesian classifier. The assignTaxonomy function takes a set of sequences and a training set of taxonomically classified sequences, and outputs the taxonomic assignments with at least minBoot bootstrap confidence.
-#Here, I have supplied a modified version of the GeoSymbio ITS2 database listing more taxonomic info as phyloseq requires (Franklin et al. 2012)
-#For example: GeoSymbio data (taken from "all clades" at https://sites.google.com/site/geosymbio/downloads):
-#>A1.1
-#modified version for phyloseq looks like this instead:
-#>Symbiodinium; Clade A; A1.1
+#also doing other taxonomy method:
+#Assign Taxonomy
+taxa <- assignTaxonomy(seqtab.nochim, "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/silva_nr99_v138_train_set.fa",tryRC=TRUE)
+unname(head(taxa))
+taxa.plus <- addSpecies(taxa, "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/silva_species_assignment_v138.fa",tryRC=TRUE,verbose=TRUE)
+# 237 out of 2380 were assigned to the species level.
+# Of which 214 had genera consistent with the input table.
 
-taxa <- assignTaxonomy(seqtab.nochim, "GeoSymbio_ITS2_LocalDatabase_verForPhyloseq.fasta", minBoot=5,multithread=TRUE,tryRC=TRUE,outputBootstraps=FALSE)
-#minboot should be higher
-#Obtain a csv file for the taxonomy so that it's easier to map the sequences for the heatmap.
-write.csv(taxa, file="taxa.csv",row.name=TRUE,quote=FALSE)
-unname(head(taxa, 30))
-unname(taxa)
+saveRDS(taxa.plus, file="mr16s_taxaplus.rds")
+saveRDS(taxa, file="mr16s_taxa.rds")
+write.csv(taxa.plus, file="mr16s_taxaplus.csv")
+write.csv(taxa, file="mr16s_taxa.csv")
 
-#Now, save outputs so can come back to the analysis stage at a later point if desired
-saveRDS(seqtab.nochim, file="final_seqtab_nochim.rds")
-saveRDS(taxa, file="final_taxa_blastCorrected.rds")
+saveRDS(seqtab.nochim, file="mr16s_seqtab.nochim.rds")
+write.csv(seqtab.nochim, file="mr16s_seqtab.nochim.csv")
+write.csv(seqtab.nochim, file="mr16s_seqtab.nochim_renamed.csv")
 
-#If you need to read in previously saved datafiles
-seqtab.nochim <- readRDS("final_seqtab_nochim.rds")
-taxa <- readRDS("final_taxa_blastCorrected.rds")
-head(taxa)
 
 ################################
 ##### handoff 2 phyloseq #######
