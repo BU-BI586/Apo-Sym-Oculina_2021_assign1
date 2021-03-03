@@ -9,7 +9,7 @@ library(phyloseq); #packageVersion("phyloseq")
 
 #Set path to unzipped, renamed fastq files
 
-path <- "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Assignment1/Oculina_control_16S_sym-apo" # CHANGE ME to the directory containing the fastq files after unzipping.
+path <- "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/Oculina_control_16S_sym-apo" # CHANGE ME to the directory containing the fastq files after unzipping.
 fns <- list.files(path)
 #Let's make sure that all of our files are there
 fns
@@ -18,25 +18,20 @@ fns
 ##### Trimming/Filtering #######
 ################################
 
-fastqs <- fns[grepl(".fastq$", fns)]
-fastqs <- sort(fastqs) # Sort ensures reads are in same order
-#fnFs <- fastqs[grepl("_R1", fastqs)] # Just the forward read files- these are old 454 data but most data are paired end
+fnFs <- sort(list.files(path, pattern = "_R1_16S_final.fastq", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern = "_R2_16S_final.fastq", full.names = TRUE))
 
-# Get sample names, assuming files named as so: SAMPLENAME_XXX.fastq; OTHERWISE MODIFY
-sample.names <- sapply(strsplit(fastqs, ".fastq"), `[`, 1) #the last number will select the field for renaming
+get.sample.name <- function(fname) strsplit(basename(fname), "_")[[1]][1]
+sample.names <- unname(sapply(fnFs, get.sample.name))
+head(sample.names)
 sample.names
-# Specify the full path to the fnFs
-fnFs <- file.path(path, fastqs)
-fnFs
 
 #########Visualize Raw data
 
 #First, lets look at quality profile of R1 reads
 plotQualityProfile(fnFs[c(1,2,3,4,5,6,7,8,9)])
 plotQualityProfile(fnFs[c(10,11,12,13,14,15,16,17,18)])
-plotQualityProfile(fnFs[c(19,20,21,22,23,24,25,26,27)])
-plotQualityProfile(fnFs[c(28,29,30,31,32,33,34,35)])
-plotQualityProfile(fnFs[c(36,37,38,39,40,41)])
+plotQualityProfile(fnFs[c(19,20,21,22,23,24,25,26)])
 
 #Recommend trimming where quality profile crashes - in this case, forward reads mostly fine up to 300
 #For common ITS amplicon strategies with paired end reads, it is undesirable to truncate reads to a fixed length due to the large amount of length variation at that locus. That is OK, just leave out truncLen. Make sure you removed the forward and reverse primers from both the forward and reverse reads though! 
@@ -45,14 +40,16 @@ plotQualityProfile(fnFs[c(36,37,38,39,40,41)])
 filt_path <- file.path(path, "trimmed")
 if(!file_test("-d", filt_path)) dir.create(filt_path)
 filtFs <- file.path(filt_path, paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(filt_path, paste0(sample.names, "_R_filt.fastq.gz"))
 
 # Filter
-out <- filterAndTrim(fnFs, filtFs, truncLen= 300, #end of single end reads = approx. 300 bp
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen= 200, #end of single end reads = approx. 300 bp
                      maxN=0, #DADA does not allow Ns
                      maxEE=1, #allow 1 expected errors, where EE = sum(10^(-Q/10)); more conservative, model converges
                      truncQ=2, 
-                     trimLeft=20, #N nucleotides to remove from the start of each read: ITS2 primer = F 20bp
+                     trimLeft=25, #first ~25 bp look wierd on quality plots
                      rm.phix=TRUE, #remove reads matching phiX genome
+                     matchIDs=TRUE, #enforce matching between id-line sequence identifiers of F and R reads
                      compress=TRUE, multithread=FALSE) # On Windows set multithread=FALSE
 
 head(out)
@@ -70,6 +67,7 @@ tail(out)
 
 setDadaOpt(MAX_CONSIST=30) #increase number of cycles to allow convergence
 errF <- learnErrors(filtFs, multithread=TRUE)
+errR <- learnErrors(filtRs, multithread=TRUE)
 #Maximum cycles was set to 30, but Convergence was found after 4 rounds
 
 #sanity check: visualize estimated error rates
@@ -79,6 +77,7 @@ errF <- learnErrors(filtFs, multithread=TRUE)
 #dots are observed error rate for each quality score
 
 plotErrors(errF, nominalQ=TRUE) 
+plotErrors(errR, nominalQ=TRUE) 
 
 ################################
 ##### Dereplicate reads #######
@@ -87,26 +86,52 @@ plotErrors(errF, nominalQ=TRUE)
 #Dereplication substantially reduces computation time by eliminating redundant comparisons.
 #DADA2 retains a summary of the quality information associated with each unique sequence. The consensus quality profile of a unique sequence is the average of the positional qualities from the dereplicated reads. These quality profiles inform the error model of the subsequent denoising step, significantly increasing DADA2’s accuracy.
 derepFs <- derepFastq(filtFs, verbose=TRUE)
+derepRs <- derepFastq(filtRs, verbose=TRUE)
 # Name the derep-class objects by the sample names
 names(derepFs) <- sample.names
+names(derepRs) <- sample.names
 
 ################################
 ##### Infer Sequence Variants #######
 ################################
 
 #Must change some of the DADA options b/c original program optomized for ribosomal data, not ITS - from github, "We currently recommend BAND_SIZE=32 for ITS data." leave as default for 16S/18S
-setDadaOpt(BAND_SIZE=32)
+#setDadaOpt(BAND_SIZE=32)
 dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
+dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
 
 #now, look at the dada class objects by sample
 #will tell how many 'real' variants in unique input seqs
 #By default, the dada function processes each sample independently, but pooled processing is available with pool=TRUE and that may give better results for low sampling depths at the cost of increased computation time. See our discussion about pooling samples for sample inference. 
 dadaFs[[1]]
-dadaFs[[25]]
+dadaRs[[1]]
+
+
+#~############################~#
+##### Merge paired reads #######
+#~############################~#
+
+#To further cull spurious sequence variants
+#Merge the denoised forward and reverse reads
+#Paired reads that do not exactly overlap are removed
+
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose=TRUE)
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+
+summary((mergers[[1]]))
+
+#We now have a data.frame for each sample with the merged $sequence, its $abundance, and the indices of the merged $forward and $reverse denoised sequences. Paired reads that did not exactly overlap were removed by mergePairs.
 
 #construct sequence table
-seqtab <- makeSequenceTable(dadaFs)
-head(seqtab)
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+#dimensions are 13508
+
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+
+plot(table(nchar(getSequences(seqtab)))) #real variants appear to be right in that 244-264 window
 
 ################################
 ##### Remove chimeras #######
@@ -118,15 +143,15 @@ head(seqtab)
 
 seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
 dim(seqtab.nochim)
-# Identified 1 bimeras out of 117 input sequences.
+# Identified 125 bimeras out of 508 input sequences.
 
 sum(seqtab.nochim)/sum(seqtab)
 #The fraction of chimeras varies based on factors including experimental procedures and sample complexity, 
 #Most of your reads should remain after chimera removal (it is not uncommon for a majority of sequence variants to be removed though)
-#For our sample, this ratio was 0.9998201, there was only 1 bimera
+#For our sample, this ratio was 0.5748933, there was 125 bimeras
 
-write.csv(seqtab,file="Alizah_seqtab.csv")
-write.csv(seqtab.nochim,file="Alizah_nochim.csv")
+write.csv(seqtab,file="Oculina_seqtab.csv")
+write.csv(seqtab.nochim,file="Oculina_nochim.csv")
 ################################
 ##### Track Read Stats #######
 ################################
@@ -188,9 +213,9 @@ ranks <- c("domain", "phylum", "class", "order", "family", "genus", "species") #
 taxid <- t(sapply(ids, function(x) {
     m <- match(ranks, x$rank)
     taxa <- x$taxon[m]
-   taxa[startsWith(taxa, "unclassified_")] <- NA
-   taxa
- }))
+    taxa[startsWith(taxa, "unclassified_")] <- NA
+    taxa
+}))
 colnames(taxid) <- ranks; rownames(taxid) <- getSequences(seqtab.nochim)
 
 #also doing other taxonomy method:
@@ -198,26 +223,45 @@ colnames(taxid) <- ranks; rownames(taxid) <- getSequences(seqtab.nochim)
 taxa <- assignTaxonomy(seqtab.nochim, "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/silva_nr99_v138_train_set.fa",tryRC=TRUE)
 unname(head(taxa))
 taxa.plus <- addSpecies(taxa, "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/silva_species_assignment_v138.fa",tryRC=TRUE,verbose=TRUE)
-# 237 out of 2380 were assigned to the species level.
-# Of which 214 had genera consistent with the input table.
+# 18 out of 383 were assigned to the species level.
+# Of which 10 had genera consistent with the input table.
 
-saveRDS(taxa.plus, file="mr16s_taxaplus.rds")
-saveRDS(taxa, file="mr16s_taxa.rds")
-write.csv(taxa.plus, file="mr16s_taxaplus.csv")
-write.csv(taxa, file="mr16s_taxa.csv")
+saveRDS(taxa.plus, file="Oculina16s_taxaplus.rds")
+saveRDS(taxa, file="Oculina16s_taxa.rds")
+write.csv(taxa.plus, file="Oculina16s_taxaplus.csv")
+write.csv(taxa, file="Oculina16s_taxa.csv")
 
-saveRDS(seqtab.nochim, file="mr16s_seqtab.nochim.rds")
-write.csv(seqtab.nochim, file="mr16s_seqtab.nochim.csv")
-write.csv(seqtab.nochim, file="mr16s_seqtab.nochim_renamed.csv")
+saveRDS(seqtab.nochim, file="Oculina16s_seqtab.nochim.rds")
+write.csv(seqtab.nochim, file="Oculina16s_seqtab.nochim.csv")
+write.csv(seqtab.nochim, file="Oculina16s_seqtab.nochim_renamed.csv")
 
 
-################################
+#### Read in previously saved datafiles ####
+setwd("C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/Oculina_control_16S_sym-apo")
+seqtab.nochim <- readRDS("Oculina16s_seqtab.nochim.rds")
+taxa <- readRDS("Oculina16s_taxa.rds")
+taxa.plus <- readRDS("Oculina16s_taxaplus.rds")
+
+#~############################~#
 ##### handoff 2 phyloseq #######
-################################
+#~############################~#
+
+#BiocManager::install("phyloseq")
+library('phyloseq')
+library('ggplot2')
+#install.packages('Rmisc')
+library('Rmisc')
+#install.packages('cowplot')
+library(cowplot)
+
+# #import dataframe holding sample information
+# samdf<-read.csv("Oculina16s_sampledata.csv")
+# head(samdf)
+# rownames(samdf) <- samdf$id
 
 #import dataframe holding sample information
 #have your samples in the same order as the seqtab file in the rows, variables as columns
-samdf<-read.csv("variabletable.csv")
+samdf<-read.csv("Oculina_16S_metadata.txt")
 head(samdf)
 head(seqtab.nochim)
 head(taxa)
