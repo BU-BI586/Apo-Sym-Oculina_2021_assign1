@@ -8,7 +8,6 @@ library(ggplot2); #packageVersion("ggplot2")
 library(phyloseq); #packageVersion("phyloseq")
 
 #Set path to unzipped, renamed fastq files
-
 path <- "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/Oculina_control_16S_sym-apo" # CHANGE ME to the directory containing the fastq files after unzipping.
 fns <- list.files(path)
 #Let's make sure that all of our files are there
@@ -17,7 +16,6 @@ fns
 ################################
 ##### Trimming/Filtering #######
 ################################
-
 fnFs <- sort(list.files(path, pattern = "_R1_16S_final.fastq", full.names = TRUE))
 fnRs <- sort(list.files(path, pattern = "_R2_16S_final.fastq", full.names = TRUE))
 
@@ -26,15 +24,11 @@ sample.names <- unname(sapply(fnFs, get.sample.name))
 head(sample.names)
 sample.names
 
-#########Visualize Raw data
-
+#########Visualize Raw data##########
 #First, lets look at quality profile of R1 reads
 plotQualityProfile(fnFs[c(1,2,3,4,5,6,7,8,9)])
 plotQualityProfile(fnFs[c(10,11,12,13,14,15,16,17,18)])
 plotQualityProfile(fnFs[c(19,20,21,22,23,24,25,26)])
-
-#Recommend trimming where quality profile crashes - in this case, forward reads mostly fine up to 300
-#For common ITS amplicon strategies with paired end reads, it is undesirable to truncate reads to a fixed length due to the large amount of length variation at that locus. That is OK, just leave out truncLen. Make sure you removed the forward and reverse primers from both the forward and reverse reads though! 
 
 #Make directory and filenames for the filtered fastqs
 filt_path <- file.path(path, "trimmed")
@@ -62,9 +56,6 @@ tail(out)
 ################################
 ##### Learn Error Rates #######
 ################################
-#DADA2 learns its error model from the data itself by alternating estimation of the error rates and the composition of the sample until they converge on a jointly consistent solution (this is similar to the E-M algorithm)
-#As in many optimization problems, the algorithm must begin with an initial guess, for which the maximum possible error rates in this data are used (the error rates if only the most abundant sequence is correct and all the rest are errors).
-
 setDadaOpt(MAX_CONSIST=30) #increase number of cycles to allow convergence
 errF <- learnErrors(filtFs, multithread=TRUE)
 errR <- learnErrors(filtRs, multithread=TRUE)
@@ -94,9 +85,6 @@ names(derepRs) <- sample.names
 ################################
 ##### Infer Sequence Variants #######
 ################################
-
-#Must change some of the DADA options b/c original program optomized for ribosomal data, not ITS - from github, "We currently recommend BAND_SIZE=32 for ITS data." leave as default for 16S/18S
-#setDadaOpt(BAND_SIZE=32)
 dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
 dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
 
@@ -110,7 +98,6 @@ dadaRs[[1]]
 #~############################~#
 ##### Merge paired reads #######
 #~############################~#
-
 #To further cull spurious sequence variants
 #Merge the denoised forward and reverse reads
 #Paired reads that do not exactly overlap are removed
@@ -152,10 +139,10 @@ sum(seqtab.nochim)/sum(seqtab)
 
 write.csv(seqtab,file="Oculina_seqtab.csv")
 write.csv(seqtab.nochim,file="Oculina_nochim.csv")
+
 ################################
 ##### Track Read Stats #######
 ################################
-
 getN <- function(x) sum(getUniques(x))
 track <- cbind(out, sapply(dadaFs, getN), sapply(dadaFs, getN), rowSums(seqtab), rowSums(seqtab.nochim))
 colnames(track) <- c("input", "filtered", "denoised", "merged", "tabled", "nonchim")
@@ -165,60 +152,30 @@ tail(track)
 
 write.csv(track,file="ReadFilterStats_AllData_final.csv",row.names=TRUE,quote=FALSE)
 
-#THIS IS ITS2 PART FROM ORIGONAL SCRIPT
-# ################################
-# ##### Assign Taxonomy #######
-# ################################
-# 
-# #It is common at this point, especially in 16S/18S/ITS amplicon sequencing, to classify sequence variants taxonomically. 
-# #DADA2 provides a native implementation of the RDP's naive Bayesian classifier. The assignTaxonomy function takes a set of sequences and a training set of taxonomically classified sequences, and outputs the taxonomic assignments with at least minBoot bootstrap confidence.
-# #Here, I have supplied a modified version of the GeoSymbio ITS2 database listing more taxonomic info as phyloseq requires (Franklin et al. 2012)
-# #For example: GeoSymbio data (taken from "all clades" at https://sites.google.com/site/geosymbio/downloads):
-# #>A1.1
-# #modified version for phyloseq looks like this instead:
-# #>Symbiodinium; Clade A; A1.1
-# 
-# taxa <- assignTaxonomy(seqtab.nochim, "GeoSymbio_ITS2_LocalDatabase_verForPhyloseq.fasta", minBoot=5,multithread=TRUE,tryRC=TRUE,outputBootstraps=FALSE)
-# #minboot should be higher
-# #Obtain a csv file for the taxonomy so that it's easier to map the sequences for the heatmap.
-# write.csv(taxa, file="taxa.csv",row.name=TRUE,quote=FALSE)
-# unname(head(taxa, 30))
-# unname(taxa)
-# 
-# #Now, save outputs so can come back to the analysis stage at a later point if desired
-# saveRDS(seqtab.nochim, file="final_seqtab_nochim.rds")
-# saveRDS(taxa, file="final_taxa_blastCorrected.rds")
-# 
-# #If you need to read in previously saved datafiles
-# seqtab.nochim <- readRDS("final_seqtab_nochim.rds")
-# taxa <- readRDS("final_taxa_blastCorrected.rds")
-# head(taxa)
 #~############################~#
 ##### Assign Taxonomy ##########
 #~############################~#
+# # #Using package DECIPHER as an alternatie to 'assignTaxonomy'
+# BiocManager::install("DECIPHER")
+# library(DECIPHER); packageVersion("DECIPHER")
+# # #citation("DECIPHER")
+# # 
+# # #http://DECIPHER.codes/Downloads.html. Download the SILVA SSU r132 (modified) file to follow along.
+# # Olivia: I downloaded r138
+# dna <- DNAStringSet(getSequences(seqtab.nochim)) 
+# # Create a DNAStringSet from the ASVs
+# load("C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/SILVA_SSU_r138_2019.RData") # CHANGE TO THE PATH OF YOUR TRAINING SET
+# ids <- IdTaxa(dna, trainingSet, strand="top", processors=NULL, verbose=FALSE, threshold=50) # use all processors
+# ranks <- c("domain", "phylum", "class", "order", "family", "genus", "species") # ranks of interest
+# # # Convert the output object of class "Taxa" to a matrix analogous to the output from assignTaxonomy
+# taxid <- t(sapply(ids, function(x) {
+#     m <- match(ranks, x$rank)
+#     taxa <- x$taxon[m]
+#     taxa[startsWith(taxa, "unclassified_")] <- NA
+#     taxa
+# }))
+# colnames(taxid) <- ranks; rownames(taxid) <- getSequences(seqtab.nochim)
 
-# #Using package DECIPHER as an alternatie to 'assignTaxonomy'
-BiocManager::install("DECIPHER")
-library(DECIPHER); packageVersion("DECIPHER")
-# #citation("DECIPHER")
-# 
-# #http://DECIPHER.codes/Downloads.html. Download the SILVA SSU r132 (modified) file to follow along.
-# Olivia: I downloaded r138
-dna <- DNAStringSet(getSequences(seqtab.nochim)) 
-# Create a DNAStringSet from the ASVs
-load("C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/SILVA_SSU_r138_2019.RData") # CHANGE TO THE PATH OF YOUR TRAINING SET
-ids <- IdTaxa(dna, trainingSet, strand="top", processors=NULL, verbose=FALSE, threshold=50) # use all processors
-ranks <- c("domain", "phylum", "class", "order", "family", "genus", "species") # ranks of interest
-# # Convert the output object of class "Taxa" to a matrix analogous to the output from assignTaxonomy
-taxid <- t(sapply(ids, function(x) {
-    m <- match(ranks, x$rank)
-    taxa <- x$taxon[m]
-    taxa[startsWith(taxa, "unclassified_")] <- NA
-    taxa
-}))
-colnames(taxid) <- ranks; rownames(taxid) <- getSequences(seqtab.nochim)
-
-#also doing other taxonomy method:
 #Assign Taxonomy
 taxa <- assignTaxonomy(seqtab.nochim, "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/silva_nr99_v138_train_set.fa",tryRC=TRUE)
 unname(head(taxa))
@@ -253,11 +210,6 @@ library('ggplot2')
 library('Rmisc')
 #install.packages('cowplot')
 library(cowplot)
-
-# #import dataframe holding sample information
-# samdf<-read.csv("Oculina16s_sampledata.csv")
-# head(samdf)
-# rownames(samdf) <- samdf$id
 
 #import dataframe holding sample information
 #have your samples in the same order as the seqtab file in the rows, variables as columns
