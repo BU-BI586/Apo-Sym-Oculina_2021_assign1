@@ -269,6 +269,30 @@ ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE),
                tax_table(taxa))
 ps
 
+
+#first look at data
+ps_glom <- tax_glom(ps, "Family")
+ps0 <- transform_sample_counts(ps_glom, function(x) x / sum(x))
+ps1 <- merge_samples(ps0, "symstate")
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+plot_bar(ps2, x="symstate", fill="Family")+
+  theme(legend.position="top right")
+
+#phyloseq object with shorter names - doing this one instead of one above
+ids <- paste0("sq", seq(1, length(colnames(seqtab.nochim))))
+#making output fasta file for lulu step & maybe other things, before giving new ids to sequences
+
+colnames(seqtab.nochim)<-ids
+taxa2 <- cbind(taxa.plus, rownames(taxa.plus)) #retaining raw sequence info before renaming
+rownames(taxa2)<-ids
+
+#phyloseq object with new taxa ids
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+               sample_data(samdf), 
+               tax_table(taxa2))
+
+ps
+
 ### Remove mitochondria and chloroplasts ###
 # First, get an idea of how many taxa you must remove
 ps.mito <- subset_taxa(ps, (Family=="Mitochondria"))
@@ -296,150 +320,105 @@ ps.clean
 # sample_data() Sample Data:       [ 13 samples by 6 sample variables ]
 # tax_table()   Taxonomy Table:    [ 309 taxa by 6 taxonomic ranks ]
 
-#replace sequences with shorter names (correspondence table output below)
-ids<-taxa_names(ps.clean)
-ids <- paste0("sq",seq(1, length(colnames(seqtab.nochim))))
-colnames(seqtab.nochim) <- ids
-
-#Bar-plots
-top90 <- names(sort(taxa_sums(ps.clean), decreasing=TRUE))[1:90]
-ps.top90 <- transform_sample_counts(ps.clean, function(OTU) OTU/sum(OTU))
-ps.top90 <- prune_taxa(top90, ps.top90)
-
-plot_bar(ps.top90, x="Sample", fill="Class") 
-
-#visusalize via counts rather than abundances:
-plot_bar(ps.clean, x = "Sample", fill= "Class") #+ facet_wrap("tank")
-#
-#Obtain a csv file for the phyloseq data. Will give you the abundances for each sample and class. Useful for constructing the heatmap. Also, enables you to use ggplot, and construct more aesthetically pleasing plot.
-psz <- psmelt(ps.top90)
-write.csv(psz, file="Phyloseqoutputfinal.csv")
-p <- ggplot(psz, aes(x=Sample, y=Abundance, fill=Class))
-p + geom_bar(stat="identity", colour="black")
+seqtab.clean <- data.frame(otu_table(ps.clean))
+write.csv(seqtab.clean,file="seqtab.cleaned.csv")
+seqtab.clean <- read.csv("seqtab.cleaned.csv",row.names=1)
 
 #### rarefy #####
 library(vegan)
 
-rarecurve(seqtab.nochim,step=100,label=FALSE) #after removing contaminats
+rarecurve(seqtab.clean,step=100,label=FALSE) #after removing contaminats
 
-total <- rowSums(seqtab.nochim)
-subset(total, total <11000)
-#9 samples
-#B5 & F9 identified by MCMC.OTU below as being too low
+total <- rowSums(seqtab.clean)
+subset(total, total <200) #2000 for me (kinda arbitrary)
+# CI1 CO1
+# 168 90
+#2 samples
+#I2A I2G I3A I3I identified by MCMC.OTU below as being too low
 
-row.names.remove <- c("CE11") #being less strict
-seqtab.less <- seqtab.nochim[!(row.names(seqtab.nochim) %in% row.names.remove),]
+row.names.remove <- c("CI1","CO1")
+seqtab.less <- seqtab.clean[!(row.names(seqtab.clean) %in% row.names.remove),]
 samdf.rare <- samdf[!(row.names(samdf) %in% row.names.remove), ]
 dim(samdf.rare)
-#126 samples left? 
+# 50 samples left
 
-seqtab.rare <- rrarefy(seqtab.nochim,sample=11000)
+seqtab.rare <- rrarefy(seqtab.less,sample=200)
 rarecurve(seqtab.rare,step=100,label=FALSE)
 
 #phyloseq object but rarefied
-#taxa.rare <- assignTaxonomy(seqtab.rare, "C:/Users/Olivia Nieves/Documents/BU undergrad/BI586/Apo-Sym-Oculina_2021_assign1/silva_nr99_v138_train_set.fa",tryRC=TRUE)
 ps.rare <- phyloseq(otu_table(seqtab.rare, taxa_are_rows=FALSE), 
                     sample_data(samdf.rare), 
-                    tax_table(taxa.plus))
-ps.rare #2253 taxa first time through
-#2168 another time
+                    tax_table(taxa2))
+ps.rare
+#8289 taxa
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 308 taxa and 11 samples ]
+#sample_data() Sample Data:       [ 11 samples by 6 sample variables ]
+#tax_table()   Taxonomy Table:    [ 308 taxa by 8 taxonomic ranks ]
 
-#removing missing taxa - lost after rarefying
+# #removing missing taxa - lost after rarefying
 ps.rare <- prune_taxa(taxa_sums(ps.rare) > 0, ps.rare)
-ps.rare #2101 taxa
-#2018 taxa round 2
+ps.rare
+# 7894 taxa
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 308 taxa and 11 samples ]
+#sample_data() Sample Data:       [ 11 samples by 6 sample variables ]
+#tax_table()   Taxonomy Table:    [ 308 taxa by 8 taxonomic ranks ]
 
 seqtab.rare <- data.frame(otu_table(ps.rare))
 
 #saving
-write.csv(seqtab.rare, file="Oculina16s_seqtab.rare_12k_rd2.csv")
-write.csv(samdf.rare, file="Oculina16s_samdf.rare_12k.csv")
+write.csv(seqtab.rare, file="Oculina16s_seqtab.rare_6k.csv")
+write.csv(samdf.rare, file="Oculina16s_samdf.rare_6k.csv")
 #re-reading
-samdf.rare <- read.csv("Oculina16s_samdf.rare_12k.csv",row.names=1)
-seqtab.rare <- read.csv("Oculina16s_seqtab.rare_12k_rd2.csv",row.names=1)
+samdf.rare <- read.csv("Oculina16s_samdf.rare_6k.csv",row.names=1)
+seqtab.rare <- read.csv("Oculina16s_seqtab.rare_6k.csv",row.names=1)
 
 #### alpha diversity ####
 #Visualize alpha-diversity - ***Should be done on raw, untrimmed dataset***
 #total species diversity in a landscape (gamma diversity) is determined by two different things, the mean species diversity in sites or habitats at a more local scale (alpha diversity) and the differentiation among those habitats (beta diversity)
 #Shannon:Shannon entropy quantifies the uncertainty (entropy or degree of surprise) associated with correctly predicting which letter will be the next in a diverse string. Based on the weighted geometric mean of the proportional abundances of the types, and equals the logarithm of true diversity. When all types in the dataset of interest are equally common, the Shannon index hence takes the value ln(actual # of types). The more unequal the abundances of the types, the smaller the corresponding Shannon entropy. If practically all abundance is concentrated to one type, and the other types are very rare (even if there are many of them), Shannon entropy approaches zero. When there is only one type in the dataset, Shannon entropy exactly equals zero (there is no uncertainty in predicting the type of the next randomly chosen entity).
 #Simpson:equals the probability that two entities taken at random from the dataset of interest represent the same type. equal to the weighted arithmetic mean of the proportional abundances pi of the types of interest, with the proportional abundances themselves being used as the weights. Since mean proportional abundance of the types increases with decreasing number of types and increasing abundance of the most abundant type, λ obtains small values in datasets of high diversity and large values in datasets of low diversity. This is counterintuitive behavior for a diversity index, so often such transformations of λ that increase with increasing diversity have been used instead. The most popular of such indices have been the inverse Simpson index (1/λ) and the Gini–Simpson index (1 − λ).
-plot_richness(ps.rare, x="site", measures=c("Shannon", "Simpson"), color="zone") + theme_bw()
+plot_richness(ps.rare, x="symstate", measures=c("Shannon", "Simpson"), color=NULL) + theme_bw()
 
 df <- data.frame(estimate_richness(ps.rare, split=TRUE, measures=c("Shannon","InvSimpson","Observed")))
 df <- data.frame(estimate_richness(ps.clean, split=TRUE, measures=c("Shannon","InvSimpson","Observed")))
 df
 
-df$id <- rownames(df)
-df.div <- merge(df,samdf,by="id") #add sample data
-df.div <- merge(df,samdf.rare,by="id") #add sample data
+df$SampleID <- rownames(df)
+df.div <- merge(df,samdf,by="SampleID") #add sample data
+df.div <- merge(df,samdf.rare,by="SampleID") #add sample data
 
-write.csv(df.div,file="mr16s_diversity_rare12k.csv") #saving
-df.div <- read.csv("mr16s_diversity_rare12k.csv",row.names=1,header=TRUE) #reading back in 
+write.csv(df.div,file="Oculina16s_diversity_rare12k.csv") #saving
+df.div <- read.csv("Oculina16s_diversity_rare12k.csv",row.names=1,header=TRUE) #reading back in 
 
-quartz()
-gg.site.sha <- ggplot(df.div,aes(x=site,y=Shannon))+
+install.packages("ggplot2")
+library(ggplot2)
+library(cowplot)
+
+gg.symstate.sha <- ggplot(df.div,aes(x=symstate,y=Shannon))+
   geom_boxplot(outlier.shape=NA)+
   geom_jitter(alpha=0.5)+
   ylab("Shannon Diversity")+
-  xlab("Site")+
+  xlab("symstate")+
   theme_cowplot()
 
-gg.site.sim <- ggplot(df.div,aes(x=site,y=InvSimpson))+
+
+gg.symstate.sim <- ggplot(df.div,aes(x=symstate,y=InvSimpson))+
   geom_boxplot(outlier.shape=NA)+
   geom_jitter(alpha=0.5)+
   ylab("Inv. Simpson diversity")+
-  xlab("Site")+
+  xlab("symstate")+
   theme_cowplot()
 
-gg.site.obs <- ggplot(df.div,aes(x=site,y=Observed))+
+gg.symstate.obs <- ggplot(df.div,aes(x=symstate,y=Observed))+
   geom_boxplot(outlier.shape=NA)+
   geom_jitter(alpha=0.5)+
   ylab("OTU richness")+
-  xlab("Site")+
+  xlab("symstate")+
   theme_cowplot()
 
-ggarrange(gg.site.obs,gg.site.sha,gg.site.sim,nrow=1)
+install.packages("ggpubr")
+library(ggpubr)
 
-gg.sh <- ggplot(df.div, aes(x=zone, y=Shannon,color=zone,shape=zone))+
-  geom_boxplot(outlier.shape=NA)+
-  xlab("Reef zone")+
-  ylab("Shannon diversity")+
-  theme_cowplot()+
-  scale_shape_manual(values=c(16,15),labels=c("BR","FR"))+
-  scale_x_discrete(labels=c("BR","FR"))+
-  scale_colour_manual(values=c("#ED7953FF","#8405A7FF"),labels=c("Back reef","Fore reef"))+
-  #guides(color=guide_legend(title="Reef zone"),shape=guide_legend(title="Reef zone"))+
-  theme(legend.position="none")+
-  geom_jitter(alpha=0.5)+
-  facet_wrap(~site)
-gg.sh
-
-gg.si <- ggplot(df.div, aes(x=zone, y=InvSimpson,color=zone,shape=zone))+
-  geom_boxplot(outlier.shape=NA)+
-  xlab("Reef zone")+
-  ylab("Inv. Simpson diversity")+
-  theme_cowplot()+
-  scale_shape_manual(values=c(16,15),labels=c("Back reef","Fore reef"))+
-  scale_colour_manual(values=c("#ED7953FF","#8405A7FF"),labels=c("Back reef","Fore reef"))+
-  #guides(color=guide_legend(title="Reef zone"),shape=guide_legend(title="Reef zone"))+
-  theme(legend.position="none")+
-  geom_jitter(alpha=0.5)+
-  facet_wrap(~site)+
-  scale_x_discrete(labels=c("BR","FR"))
-gg.si
-
-gg.obs <- ggplot(df.div, aes(x=zone, y=Observed,color=zone,shape=zone))+
-  geom_boxplot(outlier.shape=NA)+
-  xlab("Reef zone")+
-  ylab("OTU richness")+
-  theme_cowplot()+
-  scale_shape_manual(values=c(16,15),labels=c("Back reef","Fore reef"))+
-  scale_colour_manual(values=c("#ED7953FF","#8405A7FF"),labels=c("Back reef","Fore reef"))+
-  #guides(color=guide_legend(title="Reef zone"),shape=guide_legend(title="Reef zone"))+
-  theme(legend.position="none")+
-  geom_jitter(alpha=0.5)+
-  facet_wrap(~site)+
-  scale_x_discrete(labels=c("BR","FR"))
-gg.obs
-
-ggarrange(gg.obs,gg.sh,gg.si,nrow=1)
+ggarrange(gg.symstate.obs,gg.symstate.sha,gg.symstate.sim,nrow=1)
